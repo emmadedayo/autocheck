@@ -1,47 +1,58 @@
 import {
-  CallHandler,
-  ExecutionContext,
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
   HttpException,
   HttpStatus,
-  Injectable,
-  InternalServerErrorException,
-  NestInterceptor,
 } from '@nestjs/common';
-import { Observable, throwError } from 'rxjs';
-import { catchError } from 'rxjs/operators';
+import { HttpAdapterHost } from '@nestjs/core';
+import { ValidationException } from './error';
 
-import CustomLogger from '../logger';
-import { ICustomError } from '../interfaces/error.interface';
+@Catch()
+export class AllExceptionsFilter implements ExceptionFilter {
+  constructor(private readonly httpAdapterHost: HttpAdapterHost) {}
 
-@Injectable()
-export class ErrorsInterceptor implements NestInterceptor {
-  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    return next.handle().pipe(
-      catchError((err: ICustomError) => {
-        if (err.message && err.message.EN) {
-          if (err.status === HttpStatus.INTERNAL_SERVER_ERROR) {
-            CustomLogger.error(err.message);
-          }
+  catch(exception: any, host: ArgumentsHost): void {
+    // In certain situations `httpAdapter` might not be available in the
+    // constructor method, thus we should resolve it here.
+    const { httpAdapter } = this.httpAdapterHost;
 
-          return throwError(
-            new HttpException(
-              {
-                EN: err.message.EN,
-                ...(err.message.DETAILS && { DETAILS: err.message.DETAILS }),
-              },
-              err.status || HttpStatus.INTERNAL_SERVER_ERROR,
-            ),
-          );
+    const ctx = host.switchToHttp();
+
+    const httpStatus =
+      exception instanceof HttpException
+        ? exception.getStatus()
+        : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    switch (true) {
+      case exception instanceof ValidationException: {
+        const exceptionResponse = exception.getResponse();
+        let errorMessage = '';
+        // Assuming exceptionResponse is an array of validation error objects
+        if (Array.isArray(exceptionResponse) && exceptionResponse.length > 0) {
+          errorMessage = exceptionResponse[0].message;
+        } else if (typeof exceptionResponse === 'string') {
+          errorMessage = exceptionResponse;
+        } else {
+          errorMessage = 'Validation error occurred'; // Default message if structure is unexpected
         }
+        const responseBody = {
+          success: false,
+          message: errorMessage,
+          statusCode: HttpStatus.BAD_REQUEST,
+        };
+        return httpAdapter.reply(ctx.getResponse(), responseBody, httpStatus);
+      }
 
-        CustomLogger.error(err);
-
-        return throwError(
-          new InternalServerErrorException({
-            EN: 'Internal Server Error',
-          }),
-        );
-      }),
-    );
+      default: {
+        const responseBody = {
+          success: false,
+          message: exception.message,
+          statusCode: HttpStatus.BAD_REQUEST,
+          stack: exception.stack,
+        };
+        httpAdapter.reply(ctx.getResponse(), responseBody, httpStatus);
+      }
+    }
   }
 }

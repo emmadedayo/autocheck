@@ -23,7 +23,7 @@ export class BaseResponse<T> {
     }
   }
 
-  static success<T>(
+  static ok<T>(
     data?: T,
     message?: string,
     status_code?: HttpStatus,
@@ -31,7 +31,7 @@ export class BaseResponse<T> {
     return new BaseResponse(true, status_code, message, data);
   }
 
-  static error<T>(
+  static bad<T>(
     message: string,
     data?: T,
     status_code?: HttpStatus,
